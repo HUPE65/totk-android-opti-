@@ -3172,3 +3172,44 @@ Log lines worth grepping: `dark flash`, `pass probe`, `depth target sizes`, `tex
   from the computer. The app needs exactly one version folder under `rewritten/`.
 - adb cannot create folders under `Android/data` on Android 13; `install_app.sh data` makes them first.
 - After installing, an old instance can hold the game-slot lock: clear the app from recents.
+
+## Android window refresh-rate observation (S25 Ultra investigation)
+
+The Java game Activity emits event-driven `TotkPerf` observations while resumed:
+- `activity-resume`: the window's current display and active mode;
+- `display-changed`: changes reported for the display currently hosting the game window;
+- `window-focus` / `window-focus-lost`: focus transitions;
+- `first-user-interaction`: the first interaction after each resume.
+
+Each observation records the window display ID, `Display.getMode()` mode ID,
+`Display.getRefreshRate()` and the advertised supported mode IDs/rates. These
+are Android's observations for the Activity window, not a measurement of
+physical scanout. In particular, supported modes are only capabilities, and
+`ANativeWindow_setFrameRate` / `ASurfaceTransaction_setFrameRate` remain
+content-rate requests; neither proves that the panel switched modes.
+
+Capture the Java observations with:
+
+```sh
+adb logcat -c
+adb logcat -v time -s TotkPerf:I
+```
+
+Start capture before launching the game. Leave the game untouched for several
+seconds, then touch once, and compare the `activeHz` and `activeMode` rows
+before and after `first-user-interaction`. Repeat after returning from Recents
+and after a fresh launch. Keep the complete log, including the native
+`[totk-perf]` lines from `totk.log` (or logcat when `TOTK_LOGCAT=1`).
+
+Interpretation:
+- If Android reports a low active mode before touch and a higher one after,
+  the mode transition is evidenced and the next step is to inspect Samsung's
+  per-app refresh / Game Booster policy and the timing of the display callback.
+- If `activeHz` stays high while rendered FPS is low, the panel mode is not
+  the cause by itself; inspect game pause/focus state, acquire/present pacing,
+  CPU/GPU frame times and SurfaceFlinger presentation evidence.
+- If supported modes list 120 Hz but `activeHz` remains lower, do not treat
+  the advertised 120-Hz mode as proof that it is active.
+
+This instrumentation is diagnostic only. It does not force a display mode,
+change the frame-rate hint, alter game pacing, or add a per-frame polling loop.

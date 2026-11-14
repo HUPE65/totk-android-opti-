@@ -44,9 +44,10 @@ jobs:
         run: bash games/totk/android/turnip/build.sh
       - name: Publish Android shader translator
         run: |
-          SDK10="$(dotnet --list-sdks | awk '$1 ~ /^10\\./ {print $1; exit}')"
+          dotnet --list-sdks
+          SDK10="$(dotnet --list-sdks | awk 'index($1, "10.") == 1 {print $1; exit}')"
           test -n "$SDK10" || { echo "Missing .NET 10 SDK"; exit 1; }
-          printf '{ "sdk": { "version": "%s", "rollForward": "disable" } }\\n' "$SDK10" > global.json
+          printf '{"sdk":{"version":"%s","rollForward":"disable"}}\n' "$SDK10" > global.json
           dotnet --version
           sh games/totk/tools/totk_xlate/publish_native.sh --android --ndk "$ANDROID_NDK_HOME" --out "$RUNNER_TEMP/translator"
       - name: Generate disposable diagnostic signing key

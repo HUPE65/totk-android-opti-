@@ -10,6 +10,10 @@ import android.util.Log;
 import android.view.AttachedSurfaceControl;
 import android.view.Display;
 import android.view.View;
+import android.view.MotionEvent;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import com.aure.totk.companion.AssetStore;
 import com.aure.totk.companion.CompanionNative;
 import com.aure.totk.companion.DisplayClass;
@@ -89,6 +93,52 @@ public final class TotkActivity extends NativeActivity {
         lastObservedDisplayId = displayId;
         lastObservedModeId = modeId;
         lastObservedRefreshRate = refreshRate;
+    }
+
+
+    // Diagnostic only: distinguish continuous contact from a one-shot touch boost.
+    // Sampling is limited to one observation per second and never requests a display mode.
+    private final Handler touchDiagHandler = new Handler(Looper.getMainLooper());
+    private boolean touchDiagRunning;
+    private boolean touchDiagDown;
+    private long touchDiagDownAt;
+    private final Runnable touchDiagSample = new Runnable() {
+        @Override public void run() {
+            if (!touchDiagRunning) return;
+            long now = SystemClock.elapsedRealtime();
+            Log.i("TotkPerf", "touch-diag event=sample elapsedMs=" + now
+                    + " down=" + touchDiagDown
+                    + " downDurationMs=" + (touchDiagDown ? now - touchDiagDownAt : 0)
+                    + " focused=" + hasWindowFocus()
+                    + " resumed=" + resumed);
+            observeDisplayRate("touch-diag-sample", false);
+            touchDiagHandler.postDelayed(this, 1000);
+        }
+    };
+    private void startTouchDiag() {
+        if (touchDiagRunning) return;
+        touchDiagRunning = true;
+        touchDiagHandler.postDelayed(touchDiagSample, 1000);
+    }
+    private void stopTouchDiag() {
+        touchDiagRunning = false;
+        touchDiagHandler.removeCallbacks(touchDiagSample);
+        touchDiagDown = false;
+    }
+    @Override public boolean dispatchTouchEvent(MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN && !touchDiagDown) {
+            touchDiagDown = true;
+            touchDiagDownAt = SystemClock.elapsedRealtime();
+            Log.i("TotkPerf", "touch-diag event=down elapsedMs=" + touchDiagDownAt);
+        } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            long now = SystemClock.elapsedRealtime();
+            Log.i("TotkPerf", "touch-diag event=" + (action == MotionEvent.ACTION_UP ? "up" : "cancel")
+                    + " elapsedMs=" + now
+                    + " contactDurationMs=" + (touchDiagDown ? now - touchDiagDownAt : 0));
+            touchDiagDown = false;
+        }
+        return super.dispatchTouchEvent(event);
     }
 
     private void startDisplayRateObservation() {
@@ -268,6 +318,7 @@ public final class TotkActivity extends NativeActivity {
         resumed = true;
         firstInteractionObserved = false;
         startDisplayRateObservation();
+        startTouchDiag();
         ensureMainDisplay();
         GameFeedback f = feedback;
         if (f != null) f.resume();
@@ -294,6 +345,7 @@ public final class TotkActivity extends NativeActivity {
     }
     @Override protected void onPause() {
         resumed = false;
+        stopTouchDiag();
         stopDisplayRateObservation();
         GameFeedback f = feedback;
         if (f != null) f.pause();   // no motion in the background, and no motor left running
@@ -313,6 +365,7 @@ public final class TotkActivity extends NativeActivity {
         super.onStop();
     }
     @Override protected void onDestroy() {
+        stopTouchDiag();
         updatePresentPrerotate(0);
         if (companion != null) { companion.close(); companion = null; }
         if (saves != null) { saves.close(1500); saves = null; }

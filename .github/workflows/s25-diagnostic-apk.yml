@@ -8,13 +8,12 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 240
     env:
       ANDROID_NDK_HOME: ${{ github.workspace }}/android-sdk/ndk/28.2.13676358
       ANDROID_HOME: ${{ github.workspace }}/android-sdk
       TURNIP_VARIANTS: release
-      TURNIP_USE_HOST_TOOLS: '1'
       JOBS: '2'
     steps:
       - uses: actions/checkout@v4

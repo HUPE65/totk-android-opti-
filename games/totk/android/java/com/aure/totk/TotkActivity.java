@@ -3,6 +3,7 @@ package com.aure.totk;
 import android.app.NativeActivity;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.hardware.display.DisplayManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
@@ -26,6 +27,13 @@ public final class TotkActivity extends NativeActivity {
     private AttachedSurfaceControl presentRoot;
     private AttachedSurfaceControl.OnBufferTransformHintChangedListener presentHintListener;
     private long presentEpoch;
+    private DisplayManager displayManager;
+    private DisplayManager.DisplayListener displayRateListener;
+    private boolean displayRateListenerRegistered;
+    private boolean firstInteractionObserved;
+    private int lastObservedDisplayId = -1;
+    private int lastObservedModeId = -1;
+    private float lastObservedRefreshRate;
     private boolean displayMoveRequested;
     private static boolean updateChecked;
     private boolean updateOpen;
@@ -49,6 +57,74 @@ public final class TotkActivity extends NativeActivity {
             nativeGameFocus(hasWindowFocus(), single);
         });
     }
+    /**
+     * Observe the mode Android is actually using for this Activity's window.
+     * Frame-rate hints are only requests; supported modes alone do not prove
+     * which mode SurfaceFlinger selected. Keep this diagnostic event-driven.
+     */
+    private void observeDisplayRate(String reason, boolean force) {
+        Display display = getWindow().getDecorView().getDisplay();
+        if (display == null) {
+            if (force) Log.i("TotkPerf", "display observation (" + reason + "): window has no display");
+            return;
+        }
+        Display.Mode mode = display.getMode();
+        int modeId = mode != null ? mode.getModeId() : -1;
+        float refreshRate = display.getRefreshRate();
+        int displayId = display.getDisplayId();
+        if (!force && displayId == lastObservedDisplayId && modeId == lastObservedModeId
+                && Math.abs(refreshRate - lastObservedRefreshRate) < 0.01f) return;
+
+        StringBuilder supported = new StringBuilder();
+        for (Display.Mode candidate : display.getSupportedModes()) {
+            if (supported.length() != 0) supported.append(',');
+            supported.append(candidate.getModeId()).append(':')
+                    .append(String.format(java.util.Locale.ROOT, "%.3f", candidate.getRefreshRate()));
+        }
+        Log.i("TotkPerf", "display observation (" + reason + "): display=" + displayId
+                + " activeMode=" + modeId
+                + " activeHz=" + String.format(java.util.Locale.ROOT, "%.3f", refreshRate)
+                + " supportedModes[id:Hz]=" + supported
+                + "; frame-rate hints are requests, not mode confirmation");
+        lastObservedDisplayId = displayId;
+        lastObservedModeId = modeId;
+        lastObservedRefreshRate = refreshRate;
+    }
+
+    private void startDisplayRateObservation() {
+        if (displayManager == null) {
+            displayManager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
+        }
+        if (displayRateListener == null) {
+            displayRateListener = new DisplayManager.DisplayListener() {
+                @Override public void onDisplayAdded(int displayId) {
+                    observeDisplayRate("display-added", true);
+                }
+                @Override public void onDisplayRemoved(int displayId) {
+                    observeDisplayRate("display-removed", true);
+                }
+                @Override public void onDisplayChanged(int displayId) {
+                    Display windowDisplay = getWindow().getDecorView().getDisplay();
+                    if (windowDisplay != null && windowDisplay.getDisplayId() == displayId) {
+                        observeDisplayRate("display-changed", false);
+                    }
+                }
+            };
+        }
+        if (displayManager != null && !displayRateListenerRegistered) {
+            displayManager.registerDisplayListener(displayRateListener, null);
+            displayRateListenerRegistered = true;
+        }
+        observeDisplayRate("activity-resume", true);
+    }
+
+    private void stopDisplayRateObservation() {
+        if (displayManager != null && displayRateListenerRegistered) {
+            displayManager.unregisterDisplayListener(displayRateListener);
+            displayRateListenerRegistered = false;
+        }
+    }
+
     private static native void nativePresentTransformHint(long epoch, int hint);
     private static native void nativeTextInputDone(long serial, byte[] utf8);
     private static native void nativeGameFocus(boolean focused, boolean singleDisplay);
@@ -190,6 +266,8 @@ public final class TotkActivity extends NativeActivity {
     @Override protected void onResume() {
         super.onResume();
         resumed = true;
+        firstInteractionObserved = false;
+        startDisplayRateObservation();
         ensureMainDisplay();
         GameFeedback f = feedback;
         if (f != null) f.resume();
@@ -202,6 +280,7 @@ public final class TotkActivity extends NativeActivity {
     }
     @Override public void onWindowFocusChanged(boolean focused) {
         super.onWindowFocusChanged(focused);
+        observeDisplayRate(focused ? "window-focus" : "window-focus-lost", false);
         // Quickstep can leave the live recents tile RESUMED. On one display,
         // focus loss must pause too, and focus return need not call onResume.
         // Never apply that policy to multi-resume on a second display.
@@ -215,10 +294,19 @@ public final class TotkActivity extends NativeActivity {
     }
     @Override protected void onPause() {
         resumed = false;
+        stopDisplayRateObservation();
         GameFeedback f = feedback;
         if (f != null) f.pause();   // no motion in the background, and no motor left running
         super.onPause();
     }
+    @Override public void onUserInteraction() {
+        super.onUserInteraction();
+        if (!firstInteractionObserved) {
+            firstInteractionObserved = true;
+            observeDisplayRate("first-user-interaction", true);
+        }
+    }
+
     @Override protected void onStop() {
         // Leaving the foreground may be the last chance before the process is killed: push a save made just now.
         if (saves != null) saves.flush();

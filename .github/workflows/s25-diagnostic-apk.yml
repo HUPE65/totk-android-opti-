@@ -40,7 +40,7 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "platforms;android-35" "platforms;android-33" "build-tools;35.0.0" "ndk;28.2.13676358"
       - name: Build pinned Turnip driver
-        run: sh games/totk/android/turnip/build.sh
+        run: bash games/totk/android/turnip/build.sh
       - name: Publish Android shader translator
         run: sh games/totk/tools/totk_xlate/publish_native.sh --android --ndk "$ANDROID_NDK_HOME" --out "$RUNNER_TEMP/translator"
       - name: Generate disposable diagnostic signing key

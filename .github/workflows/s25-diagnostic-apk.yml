@@ -1,0 +1,59 @@
+name: S25 Ultra diagnostic APK (experimental)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      ANDROID_NDK_HOME: ${{ github.workspace }}/android-sdk/ndk/28.2.13676358
+      ANDROID_HOME: ${{ github.workspace }}/android-sdk
+      TURNIP_VARIANTS: release
+      JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config git make clang lld llvm rsync openssl libssl-dev zlib1g-dev
+          python -m pip install cryptography==50.0.2
+      - name: Install Android SDK and pinned NDK
+        run: |
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl -fL --retry 3 https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/android-tools.zip
+          unzip -q /tmp/android-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" "platforms;android-35" "platforms;android-33" "build-tools;35.0.0" "ndk;28.2.13676358"
+      - name: Build pinned Turnip driver
+        run: sh games/totk/android/turnip/build.sh
+      - name: Publish Android shader translator
+        run: sh games/totk/tools/totk_xlate/publish_native.sh --android --ndk "$ANDROID_NDK_HOME" --out "$RUNNER_TEMP/translator"
+      - name: Generate disposable diagnostic signing key
+        run: |
+          openssl req -x509 -newkey rsa:3072 -nodes -keyout "$RUNNER_TEMP/key.pem" -out "$RUNNER_TEMP/cert.pem" -days 2 -subj /CN=S25-Diagnostic
+          cat "$RUNNER_TEMP/cert.pem" >> "$RUNNER_TEMP/key.pem"
+      - name: Build and audit diagnostic APK
+        run: |
+          python games/totk/android/build_release.py --ndk "$ANDROID_NDK_HOME" --android-sdk "$ANDROID_HOME" --turnip games/totk/build/turnip/packages/release/driver.so --translator "$RUNNER_TEMP/translator/totk_xlate" --key "$RUNNER_TEMP/key.pem" --jobs 2 -o "$RUNNER_TEMP/totk-s25-diagnostic.apk"
+          python games/totk/android/build_release.py --audit "$RUNNER_TEMP/totk-s25-diagnostic.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: totk-s25-diagnostic-apk
+          path: ${{ runner.temp }}/totk-s25-diagnostic.apk
+          if-no-files-found: error
+          retention-days: 3

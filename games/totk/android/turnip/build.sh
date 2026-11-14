@@ -117,6 +117,8 @@ if ! have_tools; then
     mkdir -p "$TOOLS" "$WORK/tool-packages"
     if [[ -n "${TURNIP_TOOL_DEBS:-}" ]]; then
         debs=$TURNIP_TOOL_DEBS
+    elif [[ "${TURNIP_USE_HOST_TOOLS:-0}" == "1" ]]; then
+        debs=
     elif command -v apt-get >/dev/null && command -v dpkg-deb >/dev/null; then
         debs=$WORK/tool-packages
         (cd "$debs" && apt-get download "${TOOL_PACKAGES[@]}")

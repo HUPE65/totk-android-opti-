@@ -108,6 +108,11 @@ have_tools() {
     done
 }
 export PATH="$TOOLS/usr/bin:$PATH"
+# CI hosts can provide all tools directly. Avoid attempting unavailable Ubuntu
+# 26.04 pinned downloads when their executable versions are already installed.
+if have_tools && command -v spirv-as >/dev/null; then
+    echo "Using available host Mesa build tools (driver hash is verified later)"
+fi
 if ! have_tools; then
     mkdir -p "$TOOLS" "$WORK/tool-packages"
     if [[ -n "${TURNIP_TOOL_DEBS:-}" ]]; then

@@ -11,6 +11,7 @@ import android.view.AttachedSurfaceControl;
 import android.view.Display;
 import android.view.View;
 import android.view.MotionEvent;
+import android.view.WindowManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -39,6 +40,48 @@ public final class TotkActivity extends NativeActivity {
     private int lastObservedModeId = -1;
     private float lastObservedRefreshRate;
     private boolean displayMoveRequested;
+    private int originalPreferredDisplayModeId = -1;
+    private boolean preferredModeOverridden;
+
+    /** Experimental window-level request, not a guarantee of the physical panel rate. */
+    private void requestHighestRefreshMode(String reason) {
+        Display display = getWindow().getDecorView().getDisplay();
+        if (display == null || display.getMode() == null) {
+            Log.i("TotkPerf", "refresh-request reason=" + reason + " skipped=no-display");
+            return;
+        }
+        Display.Mode active = display.getMode();
+        Display.Mode best = null;
+        for (Display.Mode mode : display.getSupportedModes()) {
+            // Do not accidentally switch the display resolution to chase refresh rate.
+            if (mode.getPhysicalWidth() != active.getPhysicalWidth()
+                    || mode.getPhysicalHeight() != active.getPhysicalHeight()) continue;
+            if (best == null || mode.getRefreshRate() > best.getRefreshRate()) best = mode;
+        }
+        if (best == null) return;
+        WindowManager.LayoutParams attrs = getWindow().getAttributes();
+        if (!preferredModeOverridden) {
+            originalPreferredDisplayModeId = attrs.preferredDisplayModeId;
+            preferredModeOverridden = true;
+        }
+        if (attrs.preferredDisplayModeId != best.getModeId()) {
+            attrs.preferredDisplayModeId = best.getModeId();
+            getWindow().setAttributes(attrs);
+        }
+        Log.i("TotkPerf", "refresh-request reason=" + reason
+                + " requestedMode=" + best.getModeId() + " requestedHz=" + best.getRefreshRate()
+                + " observedMode=" + active.getModeId() + " observedHz=" + display.getRefreshRate());
+        observeDisplayRate("refresh-request-" + reason, true);
+    }
+
+    private void restorePreferredRefreshMode() {
+        if (!preferredModeOverridden) return;
+        WindowManager.LayoutParams attrs = getWindow().getAttributes();
+        attrs.preferredDisplayModeId = originalPreferredDisplayModeId;
+        getWindow().setAttributes(attrs);
+        Log.i("TotkPerf", "refresh-request restoredMode=" + originalPreferredDisplayModeId);
+        preferredModeOverridden = false;
+    }
     private static boolean updateChecked;
     private boolean updateOpen;
     private String updateVersion;
@@ -310,7 +353,10 @@ public final class TotkActivity extends NativeActivity {
     @Override public void onConfigurationChanged(Configuration config) {
         super.onConfigurationChanged(config);
         // Moving a task with the menu on top must not bring its background game back over the menu.
-        if (resumed) ensureMainDisplay();
+        if (resumed) {
+            ensureMainDisplay();
+            requestHighestRefreshMode("configuration-changed");
+        }
         if (companion != null && getDisplay() != null) companion.onDisplayChanged(getDisplay().getDisplayId());
     }
     @Override protected void onResume() {
@@ -318,6 +364,7 @@ public final class TotkActivity extends NativeActivity {
         resumed = true;
         firstInteractionObserved = false;
         startDisplayRateObservation();
+        requestHighestRefreshMode("resume");
         startTouchDiag();
         ensureMainDisplay();
         GameFeedback f = feedback;
@@ -332,6 +379,7 @@ public final class TotkActivity extends NativeActivity {
     @Override public void onWindowFocusChanged(boolean focused) {
         super.onWindowFocusChanged(focused);
         observeDisplayRate(focused ? "window-focus" : "window-focus-lost", false);
+        if (focused && resumed) requestHighestRefreshMode("focus-gained");
         // Quickstep can leave the live recents tile RESUMED. On one display,
         // focus loss must pause too, and focus return need not call onResume.
         // Never apply that policy to multi-resume on a second display.
@@ -347,6 +395,7 @@ public final class TotkActivity extends NativeActivity {
         resumed = false;
         stopTouchDiag();
         stopDisplayRateObservation();
+        restorePreferredRefreshMode();
         GameFeedback f = feedback;
         if (f != null) f.pause();   // no motion in the background, and no motor left running
         super.onPause();

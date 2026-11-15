@@ -1655,7 +1655,11 @@ static int start_game(const ANativeActivity *a) {
     snprintf(p, sizeof p, "%s/totk.env", g_data); env_file(p);
     android_driver_env_policy(); /* freeze driver options before any app worker or driver call */
     gpu_profile_identity(a);
-    log_mirror_start();   /* TOTK_LOGCAT is final now */
+    /* S25 diagnostic APK: mirror native totk.log to Android logcat (tag "totk").
+     * Force after reading totk.env so no protected Android/data access is needed.
+     * This changes logging only; it does not change rendering or game settings. */
+    setenv("TOTK_LOGCAT", "1", 1);
+    log_mirror_start();   /* diagnostic logcat mirror enabled */
     live_ctl_start();     /* after totk.env: its values are the launch values a live "unset" returns to */
     thread_sampler_start();
     totk_thread_game_startup();   /* snapshot the allowed CPUs before any guest narrows its affinity */

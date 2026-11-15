@@ -1221,6 +1221,19 @@ static void thread_sampler_start(void) {   /* after totk.env: the launch value *
             "off (default; live through totk.ctl)");
 }
 void runtime_live_frame(uint64_t frame) {   /* hle_nvn.c, once per presented frame */
+    /* Direct logcat diagnostics: independent of totk.log, inotify, and log-mirror worker.
+     * No filesystem I/O on the present path. One log line every 300 frames. */
+    static uint64_t last_report_ns, last_frame;
+    const uint64_t now_ns = totk_sampler_now();
+    if (!last_report_ns) { last_report_ns = now_ns; last_frame = frame; }
+    if (frame >= last_frame + 300) {
+        const double seconds = (double)(now_ns - last_report_ns) / 1e9;
+        if (seconds > 0.0) __android_log_print(ANDROID_LOG_INFO, "TotkPerf",
+            "native-present frames=%llu elapsed=%.2fs avg=%.1f fps sampler=%d",
+            (unsigned long long)(frame - last_frame), seconds,
+            (double)(frame - last_frame) / seconds, g_sampler_launch);
+        last_report_ns = now_ns; last_frame = frame;
+    }
     totk_live_frame(frame);
     totk_sampler_frame(&g_sampler, frame, totk_live_cached(&g_sampler_live, "TOTK_THREAD_SAMPLER", g_sampler_launch));
 }

@@ -1659,6 +1659,10 @@ static int start_game(const ANativeActivity *a) {
      * Force after reading totk.env so no protected Android/data access is needed.
      * This changes logging only; it does not change rendering or game settings. */
     setenv("TOTK_LOGCAT", "1", 1);
+    /* Diagnostic-only low-priority sampling of CPU run and scheduler wait. */
+    setenv("TOTK_THREAD_SAMPLER", "1", 1);
+    __android_log_print(ANDROID_LOG_INFO, "TotkPerf",
+            "native-diagnostic boot: logcat=1 thread-sampler=1");
     log_mirror_start();   /* diagnostic logcat mirror enabled */
     live_ctl_start();     /* after totk.env: its values are the launch values a live "unset" returns to */
     thread_sampler_start();

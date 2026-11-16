@@ -2067,6 +2067,17 @@ static int queue_cb(int fd, int events, void *data) {
     (void)fd; (void)events; AInputQueue *q = data; AInputEvent *ev;
     while (AInputQueue_getEvent(q, &ev) >= 0) {
         if (AInputQueue_preDispatchEvent(q, ev)) continue;
+        /* Touch/throughput correlation: report only DOWN/UP/CANCEL, never MOVE. */
+        if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION) {
+            int action = AMotionEvent_getAction(ev) & AMOTION_EVENT_ACTION_MASK;
+            if (action == AMOTION_EVENT_ACTION_DOWN || action == AMOTION_EVENT_ACTION_UP ||
+                action == AMOTION_EVENT_ACTION_CANCEL) {
+                __android_log_print(ANDROID_LOG_INFO, "TotkPerf", "touch action=%s t_ns=%llu",
+                    action == AMOTION_EVENT_ACTION_DOWN ? "down" :
+                    action == AMOTION_EVENT_ACTION_UP ? "up" : "cancel",
+                    (unsigned long long)totk_sampler_now());
+            }
+        }
         AInputQueue_finishEvent(q, ev, handle_input(ev));
     }
     return 1;
